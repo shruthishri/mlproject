@@ -1,0 +1,94 @@
+Step 5: Get ACR Information
+# Still in terraform directory
+terraform output acr_login_server
+# Output: assetbuilderacr.azurecr.io
+
+terraform output backend_url
+# Output: https://assetbuilder-backend.azurewebsites.net
+
+# Go back to project root
+cd ..
+Step 6: Build Docker Images Locally
+Build Backend Image
+# Navigate to backend directory
+cd asset-builder/asset-builder-backend
+
+# Build image with ACR tag
+docker build -t assetbuilderacr.azurecr.io/asset-builder-backend:latest .
+
+# Verify image was built
+docker images | grep asset-builder-backend
+
+# Go back to project root
+cd ../..
+Build Frontend Image
+# Get backend URL first
+BACKEND_URL="https://assetbuilder-backend.azurewebsites.net"
+
+# Navigate to frontend directory
+cd asset-builder/asset-builder-frontend
+
+# Build image with build argument
+docker build \
+  --build-arg REACT_APP_API_BASE=${BACKEND_URL}/api \
+  -t assetbuilderacr.azurecr.io/asset-builder-frontend:latest \
+  .
+
+# Verify image was built
+docker images | grep asset-builder-frontend
+
+# Go back to project root
+cd ../..
+Step 7: Push Images to Azure Container Registry
+# Login to ACR
+az acr login --name assetbuilderacr
+
+# Push backend image
+docker push assetbuilderacr.azurecr.io/asset-builder-backend:latest
+
+# Push frontend image
+docker push assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+
+# Verify images are in ACR
+az acr repository list --name assetbuilderacr --output table
+Expected output:
+Result
+----------------------
+asset-builder-backend
+asset-builder-frontend
+Step 8: Restart App Services to Pull Images
+# Restart backend (assetbuilder-backend)
+az webapp restart \
+  --name assetbuilder-backend \
+  --resource-group assetbuilder-rg
+
+# Restart frontend (assetbuilder-frontend)
+az webapp restart \
+  --name assetbuilder-frontend \
+  --resource-group assetbuilder-rg
+Step 9: Verify Deployment
+# Get URLs
+cd terraform
+terraform output frontend_url
+terraform output backend_url
+cd ..
+
+# Check frontend status
+az webapp show \
+  --name assetbuilder-frontend \
+  --resource-group assetbuilder-rg \
+  --query state
+
+# View frontend logs
+az webapp log tail \
+  --name assetbuilder-frontend \
+  --resource-group assetbuilder-rg
+
+# View backend logs
+az webapp log tail \
+  --name assetbuilder-backend \
+  --resource-group assetbuilder-rg
+Step 10: Access Your Application
+Open your browser to:
+https://assetbuilder-frontend.azurewebsites.net
+Note: It may take 2-3 minutes for the containers to fully start.
