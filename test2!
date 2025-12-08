@@ -133,3 +133,12 @@ docker push assetbuilderacr.azurecr.io/asset-builder-frontend:latest
 ```
 
 Follow the steps above to fix it! The key is making sure the image tags don't have the ACR name duplicated.
+
+az webapp config container set `
+  --name assetbuilder-frontend `
+  --resource-group assetbuilder-rg `
+  --container-image-name assetbuilderacr.azurecr.io/asset-builder-frontend:latest `
+  --container-registry-url https://assetbuilderacr.azurecr.io `
+  --container-registry-user assetbuilderacr `
+  --container-registry-password "YOUR_ACR_PASSWORD"
+
