@@ -1,0 +1,135 @@
+The error is clear! The image path is **duplicated**:
+
+```
+assetbuilderacr.azurecr.io/assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+```
+
+It should be:
+```
+assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+```
+
+## The Problem
+
+When you pushed the images, you used the wrong tag format.
+
+---
+
+## Solution: Rebuild and Push with Correct Tags
+
+### Step 1: Delete Old Images from ACR
+
+```bash
+# Delete incorrectly tagged images
+az acr repository delete --name assetbuilderacr --repository asset-builder-backend --yes
+az acr repository delete --name assetbuilderacr --repository asset-builder-frontend --yes
+```
+
+### Step 2: Rebuild Backend with Correct Tag
+
+```bash
+cd C:\gitRepo\asset-builder-ui\asset-builder\asset-builder-backend
+
+# Build with CORRECT tag (no duplication)
+docker build -t assetbuilderacr.azurecr.io/asset-builder-backend:latest .
+
+# Verify the tag is correct
+docker images | findstr asset-builder-backend
+```
+
+### Step 3: Rebuild Frontend with Correct Tag
+
+```bash
+cd C:\gitRepo\asset-builder-ui\asset-builder\asset-builder-frontend
+
+# Build with CORRECT tag (no duplication)
+docker build --build-arg REACT_APP_API_BASE=https://assetbuilder-backend.azurewebsites.net/api -t assetbuilderacr.azurecr.io/asset-builder-frontend:latest .
+
+# Verify the tag is correct
+docker images | findstr asset-builder-frontend
+```
+
+### Step 4: Push to ACR
+
+```bash
+# Login to ACR
+az acr login --name assetbuilderacr
+
+# Push backend
+docker push assetbuilderacr.azurecr.io/asset-builder-backend:latest
+
+# Push frontend
+docker push assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+```
+
+### Step 5: Verify Images in ACR
+
+```bash
+# List repositories
+az acr repository list --name assetbuilderacr --output table
+
+# Show tags for backend
+az acr repository show-tags --name assetbuilderacr --repository asset-builder-backend --output table
+
+# Show tags for frontend
+az acr repository show-tags --name assetbuilderacr --repository asset-builder-frontend --output table
+```
+
+### Step 6: Update App Service Configuration
+
+```bash
+# Update backend to use correct image
+az webapp config container set \
+  --name assetbuilder-backend \
+  --resource-group assetbuilder-rg \
+  --docker-custom-image-name assetbuilderacr.azurecr.io/asset-builder-backend:latest \
+  --docker-registry-server-url https://assetbuilderacr.azurecr.io
+
+# Update frontend to use correct image
+az webapp config container set \
+  --name assetbuilder-frontend \
+  --resource-group assetbuilder-rg \
+  --docker-custom-image-name assetbuilderacr.azurecr.io/asset-builder-frontend:latest \
+  --docker-registry-server-url https://assetbuilderacr.azurecr.io
+```
+
+### Step 7: Restart Services
+
+```bash
+# Restart backend
+az webapp restart --name assetbuilder-backend --resource-group assetbuilder-rg
+
+# Restart frontend
+az webapp restart --name assetbuilder-frontend --resource-group assetbuilder-rg
+```
+
+### Step 8: Wait and Test
+
+```bash
+# Wait 2-3 minutes for containers to start
+timeout /t 120
+
+# Check frontend logs
+az webapp log tail --name assetbuilder-frontend --resource-group assetbuilder-rg
+
+# Open in browser
+az webapp browse --name assetbuilder-frontend --resource-group assetbuilder-rg
+```
+
+---
+
+## Summary of the Issue
+
+You likely pushed images with this command (WRONG):
+```bash
+# WRONG - duplicates the ACR name
+docker push assetbuilderacr.azurecr.io/assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+```
+
+Should have been (CORRECT):
+```bash
+# CORRECT
+docker push assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+```
+
+Follow the steps above to fix it! The key is making sure the image tags don't have the ACR name duplicated.
