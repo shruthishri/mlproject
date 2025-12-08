@@ -1,0 +1,115 @@
+Step 1: Verify App Service Configuration
+# Check what image the frontend is configured to use
+az webapp config show --name assetbuilder-frontend --resource-group assetbuilder-rg --query linuxFxVersion -o tsv
+
+# Check what image the backend is configured to use
+az webapp config show --name assetbuilder-backend --resource-group assetbuilder-rg --query linuxFxVersion -o tsv
+Expected output:
+DOCKER|assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+DOCKER|assetbuilderacr.azurecr.io/asset-builder-backend:latest
+Step 2: Verify All Required Settings
+# Check frontend settings
+az webapp config appsettings list --name assetbuilder-frontend --resource-group assetbuilder-rg --query "[?contains(name, 'DOCKER') || name=='WEBSITES_PORT'].{name:name, value:value}" -o table
+Should show (values should NOT be null):
+Name                              Value
+--------------------------------  ------------------------------------
+DOCKER_REGISTRY_SERVER_PASSWORD   [some password]
+DOCKER_REGISTRY_SERVER_URL        https://assetbuilderacr.azurecr.io
+DOCKER_REGISTRY_SERVER_USERNAME   assetbuilderacr
+WEBSITES_PORT                     80
+Step 3: Force Container Refresh
+Sometimes Azure caches the container. Let's force it to pull fresh:
+# Stop both services
+az webapp stop --name assetbuilder-backend --resource-group assetbuilder-rg
+az webapp stop --name assetbuilder-frontend --resource-group assetbuilder-rg
+
+# Wait 10 seconds
+timeout /t 10
+
+# Start both services
+az webapp start --name assetbuilder-backend --resource-group assetbuilder-rg
+az webapp start --name assetbuilder-frontend --resource-group assetbuilder-rg
+
+# Wait 2 minutes for containers to start
+timeout /t 120
+Step 4: Check Logs Again
+az webapp log tail --name assetbuilder-frontend --resource-group assetbuilder-rg
+Step 5: If Still Failing - Set Configuration Explicitly
+Set the container image and credentials explicitly:
+# Get ACR password
+cd C:\gitRepo\asset-builder-ui\terraform
+$ACR_PASS = terraform output -raw acr_password
+cd ..
+
+# Configure frontend with explicit container settings
+az webapp config container set `
+  --name assetbuilder-frontend `
+  --resource-group assetbuilder-rg `
+  --container-image-name assetbuilderacr.azurecr.io/asset-builder-frontend:latest `
+  --container-registry-url https://assetbuilderacr.azurecr.io `
+  --container-registry-user assetbuilderacr `
+  --container-registry-password "$ACR_PASS"
+
+# Configure backend with explicit container settings
+az webapp config container set `
+  --name assetbuilder-backend `
+  --resource-group assetbuilder-rg `
+  --container-image-name assetbuilderacr.azurecr.io/asset-builder-backend:latest `
+  --container-registry-url https://assetbuilderacr.azurecr.io `
+  --container-registry-user assetbuilderacr `
+  --container-registry-password "$ACR_PASS"
+
+# Restart
+az webapp restart --name assetbuilder-backend --resource-group assetbuilder-rg
+az webapp restart --name assetbuilder-frontend --resource-group assetbuilder-rg
+Step 6: Check in Azure Portal
+While waiting, check in Azure Portal:
+Go to assetbuilder-frontend
+Click Deployment Center (left menu)
+Check:
+Registry: Should be assetbuilderacr
+Image: Should be asset-builder-frontend
+Tag: Should be latest
+If anything is wrong, fix it there and click Save
+Step 7: Test Local Image Pull
+Let's verify ACR authentication works from your machine:
+# Login to ACR
+az acr login --name assetbuilderacr
+
+# Try to pull the frontend image
+docker pull assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+
+# Try to pull the backend image
+docker pull assetbuilderacr.azurecr.io/asset-builder-backend:latest
+If this works locally, then the images and credentials are fine. The issue is with App Service configuration.
+Step 8: Check App Service Plan
+Make sure your App Service Plan supports Docker:
+az appservice plan show --name assetbuilder-plan --resource-group assetbuilder-rg --query "{name:name, sku:sku.name, kind:kind, reserved:reserved}" -o table
+Should show:
+Name                Sku    Kind    Reserved
+------------------  -----  ------  ----------
+assetbuilder-plan   B2     linux   True
+reserved: True means it's a Linux plan (required for Docker).
+Step 9: Enable Continuous Deployment (Webhook)
+This ensures App Service pulls new images automatically:
+# Enable webhook for frontend
+az webapp deployment container config `
+  --name assetbuilder-frontend `
+  --resource-group assetbuilder-rg `
+  --enable-cd true
+
+# Enable webhook for backend
+az webapp deployment container config `
+  --name assetbuilder-backend `
+  --resource-group assetbuilder-rg `
+  --enable-cd true
+
+# Restart
+az webapp restart --name assetbuilder-backend --resource-group assetbuilder-rg
+az webapp restart --name assetbuilder-frontend --resource-group assetbuilder-rg
+Step 10: Wait and Test
+# Wait 3 minutes
+timeout /t 180
+
+# Open in browser
+start https://assetbuilder-frontend.azurewebsites.net
