@@ -1,0 +1,47 @@
+Solution: Set App Settings Directly
+# Set all Docker registry settings at once for frontend
+az webapp config appsettings set `
+  --name assetbuilder-frontend `
+  --resource-group assetbuilder-rg `
+  --settings `
+    DOCKER_REGISTRY_SERVER_URL="https://assetbuilderacr.azurecr.io" `
+    DOCKER_REGISTRY_SERVER_USERNAME="assetbuilderacr" `
+    DOCKER_REGISTRY_SERVER_PASSWORD="D1W3CKAU8KAZWLKADYSMMVE1BMKDBM5IX5R6K4MDYB+ACRAL5UPR"
+
+# Set all Docker registry settings for backend
+az webapp config appsettings set `
+  --name assetbuilder-backend `
+  --resource-group assetbuilder-rg `
+  --settings `
+    DOCKER_REGISTRY_SERVER_URL="https://assetbuilderacr.azurecr.io" `
+    DOCKER_REGISTRY_SERVER_USERNAME="assetbuilderacr" `
+    DOCKER_REGISTRY_SERVER_PASSWORD="D1W3CKAU8KAZWLKADYSMMVE1BMKDBM5IX5R6K4MDYB+ACRAL5UPR"
+Verify Settings Were Applied
+# Check frontend settings
+az webapp config appsettings list `
+  --name assetbuilder-frontend `
+  --resource-group assetbuilder-rg `
+  --query "[?name=='DOCKER_REGISTRY_SERVER_PASSWORD'].{name:name, value:value}" `
+  --output table
+
+# Check backend settings
+az webapp config appsettings list `
+  --name assetbuilder-backend `
+  --resource-group assetbuilder-rg `
+  --query "[?name=='DOCKER_REGISTRY_SERVER_PASSWORD'].{name:name, value:value}" `
+  --output table
+You should see the password value (not null).
+Restart Both Services
+az webapp restart --name assetbuilder-backend --resource-group assetbuilder-rg
+az webapp restart --name assetbuilder-frontend --resource-group assetbuilder-rg
+Wait and Check Logs
+# Wait 2 minutes for containers to pull and start
+timeout /t 120
+
+# Check frontend logs
+az webapp log tail --name assetbuilder-frontend --resource-group assetbuilder-rg
+Look for:
+✅ Pulling image: assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+✅ Container ... for site ... initialized successfully
+✅ Container ... started successfully
+Alternative: Use Azure Portal
