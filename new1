@@ -1,0 +1,452 @@
+# Simplified Deployment - Both Frontend and Backend Public
+
+Let me give you a simpler approach where both frontend and backend are publicly accessible, but backend still has CORS protection.
+
+---
+
+## Complete Fresh Start
+
+### Step 1: Clean Up Existing Resources (if any)
+
+```bash
+cd C:\gitRepo\asset-builder-ui\terraform
+terraform destroy
+# Type 'yes' when prompted
+```
+
+---
+
+## Part 1: Build Docker Images Locally (Same as Before)
+
+### Step 2: Build Backend
+
+```bash
+cd C:\gitRepo\asset-builder-ui\asset-builder\asset-builder-backend
+docker build -t asset-builder-backend:local .
+docker images | findstr asset-builder-backend
+```
+
+### Step 3: Build Frontend
+
+```bash
+cd C:\gitRepo\asset-builder-ui\asset-builder\asset-builder-frontend
+docker build --build-arg REACT_APP_API_BASE=http://localhost:5000/api -t asset-builder-frontend:local .
+docker images | findstr asset-builder-frontend
+```
+
+✅ **Local images built**
+
+---
+
+## Part 2: Create Simplified Terraform Configuration
+
+### Step 4: Create New Simplified `main.tf`
+
+Replace your existing `main.tf` with this simpler version:
+
+**`C:\gitRepo\asset-builder-ui\terraform\main.tf`:**
+
+```hcl
+terraform {
+  required_version = ">= 1.0"
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+# Resource Group
+resource "azurerm_resource_group" "main" {
+  name     = "${var.project_name}-rg"
+  location = var.location
+}
+
+# Azure Container Registry
+resource "azurerm_container_registry" "acr" {
+  name                = "${var.project_name}acr"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  sku                 = "Basic"
+  admin_enabled       = true
+}
+
+# App Service Plan
+resource "azurerm_service_plan" "plan" {
+  name                = "${var.project_name}-plan"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  os_type             = "Linux"
+  sku_name            = "B2"
+}
+
+# Backend App Service (Public)
+resource "azurerm_linux_web_app" "backend" {
+  name                          = "${var.project_name}-backend"
+  resource_group_name           = azurerm_resource_group.main.name
+  location                      = azurerm_resource_group.main.location
+  service_plan_id               = azurerm_service_plan.plan.id
+  public_network_access_enabled = true
+
+  site_config {
+    always_on = true
+    
+    application_stack {
+      docker_image_name   = "${azurerm_container_registry.acr.login_server}/asset-builder-backend:latest"
+      docker_registry_url = "https://${azurerm_container_registry.acr.login_server}"
+    }
+
+    cors {
+      allowed_origins     = ["https://${var.project_name}-frontend.azurewebsites.net"]
+      support_credentials = true
+    }
+  }
+
+  app_settings = {
+    "WEBSITES_PORT"                       = "5000"
+    "WEBSITES_ENABLE_APP_SERVICE_STORAGE" = "false"
+    "DOCKER_ENABLE_CI"                    = "false"
+    "FLASK_ENV"                           = "production"
+    "FLASK_APP"                           = "app.py"
+    "CORS_ALLOWED_ORIGIN"                 = "https://${var.project_name}-frontend.azurewebsites.net"
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  logs {
+    http_logs {
+      file_system {
+        retention_in_days = 7
+        retention_in_mb   = 35
+      }
+    }
+  }
+}
+
+# Frontend App Service (Public)
+resource "azurerm_linux_web_app" "frontend" {
+  name                          = "${var.project_name}-frontend"
+  resource_group_name           = azurerm_resource_group.main.name
+  location                      = azurerm_resource_group.main.location
+  service_plan_id               = azurerm_service_plan.plan.id
+  public_network_access_enabled = true
+
+  site_config {
+    always_on = true
+    
+    application_stack {
+      docker_image_name   = "${azurerm_container_registry.acr.login_server}/asset-builder-frontend:latest"
+      docker_registry_url = "https://${azurerm_container_registry.acr.login_server}"
+    }
+  }
+
+  app_settings = {
+    "WEBSITES_PORT"                       = "80"
+    "WEBSITES_ENABLE_APP_SERVICE_STORAGE" = "false"
+    "DOCKER_ENABLE_CI"                    = "false"
+    "REACT_APP_API_BASE"                  = "https://${var.project_name}-backend.azurewebsites.net/api"
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  logs {
+    http_logs {
+      file_system {
+        retention_in_days = 7
+        retention_in_mb   = 35
+      }
+    }
+  }
+}
+
+# Grant ACR Pull permission to Backend
+resource "azurerm_role_assignment" "backend_acr_pull" {
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_linux_web_app.backend.identity[0].principal_id
+}
+
+# Grant ACR Pull permission to Frontend
+resource "azurerm_role_assignment" "frontend_acr_pull" {
+  scope                = azurerm_container_registry.acr.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_linux_web_app.frontend.identity[0].principal_id
+}
+```
+
+### Step 5: Keep `variables.tf` Same
+
+**`C:\gitRepo\asset-builder-ui\terraform\variables.tf`:**
+
+```hcl
+variable "project_name" {
+  description = "Project name"
+  type        = string
+  default     = "assetbuilder"
+}
+
+variable "location" {
+  description = "Azure region"
+  type        = string
+  default     = "West Europe"
+}
+```
+
+### Step 6: Keep `terraform.tfvars` Same
+
+**`C:\gitRepo\asset-builder-ui\terraform\terraform.tfvars`:**
+
+```hcl
+project_name = "assetbuilder"
+location     = "West Europe"
+```
+
+### Step 7: Keep `outputs.tf` Same
+
+**`C:\gitRepo\asset-builder-ui\terraform\outputs.tf`:**
+
+```hcl
+output "resource_group_name" {
+  value = azurerm_resource_group.main.name
+}
+
+output "acr_name" {
+  value = azurerm_container_registry.acr.name
+}
+
+output "acr_login_server" {
+  value = azurerm_container_registry.acr.login_server
+}
+
+output "backend_url" {
+  value = "https://${azurerm_linux_web_app.backend.default_hostname}"
+}
+
+output "frontend_url" {
+  value = "https://${azurerm_linux_web_app.frontend.default_hostname}"
+}
+```
+
+---
+
+## Part 3: Deploy Infrastructure
+
+### Step 8: Initialize Terraform
+
+```bash
+cd C:\gitRepo\asset-builder-ui\terraform
+terraform init
+```
+
+### Step 9: Plan
+
+```bash
+terraform plan
+```
+
+You should see:
+- 1 Resource Group
+- 1 Container Registry
+- 1 App Service Plan
+- 2 App Services (both public)
+- 2 Role Assignments
+
+**No VNets, subnets, or private endpoints!**
+
+### Step 10: Apply
+
+```bash
+terraform apply
+```
+
+Type `yes` when prompted.
+
+**Wait 5-7 minutes.**
+
+### Step 11: Get Infrastructure Details
+
+```bash
+terraform output acr_login_server
+terraform output backend_url
+terraform output frontend_url
+```
+
+✅ **Infrastructure created (simplified)**
+
+---
+
+## Part 4: Push Images to ACR
+
+### Step 12: Login to ACR
+
+```bash
+az acr login --name assetbuilderacr
+```
+
+### Step 13: Rebuild Frontend with Production Backend URL
+
+```bash
+cd C:\gitRepo\asset-builder-ui\asset-builder\asset-builder-frontend
+
+# Get backend URL from terraform
+cd C:\gitRepo\asset-builder-ui\terraform
+$BACKEND_URL = terraform output -raw backend_url
+cd C:\gitRepo\asset-builder-ui\asset-builder\asset-builder-frontend
+
+# Build with production backend URL
+docker build --build-arg REACT_APP_API_BASE=$BACKEND_URL/api -t assetbuilderacr.azurecr.io/asset-builder-frontend:latest .
+```
+
+### Step 14: Tag and Push Backend
+
+```bash
+cd C:\gitRepo\asset-builder-ui\asset-builder\asset-builder-backend
+
+# Tag local image for ACR
+docker tag asset-builder-backend:local assetbuilderacr.azurecr.io/asset-builder-backend:latest
+
+# Push to ACR
+docker push assetbuilderacr.azurecr.io/asset-builder-backend:latest
+```
+
+### Step 15: Push Frontend
+
+```bash
+# Already built in Step 13, just push
+docker push assetbuilderacr.azurecr.io/asset-builder-frontend:latest
+```
+
+### Step 16: Verify Images in ACR
+
+```bash
+az acr repository list --name assetbuilderacr --output table
+```
+
+Should show:
+```
+Result
+----------------------
+asset-builder-backend
+asset-builder-frontend
+```
+
+✅ **Images pushed to ACR**
+
+---
+
+## Part 5: Configure App Services
+
+### Step 17: Enable Managed Identity for ACR Access
+
+```bash
+# Backend
+az resource update `
+  --ids /subscriptions/$(az account show --query id -o tsv)/resourceGroups/assetbuilder-rg/providers/Microsoft.Web/sites/assetbuilder-backend/config/web `
+  --set properties.acrUseManagedIdentityCreds=True
+
+# Frontend
+az resource update `
+  --ids /subscriptions/$(az account show --query id -o tsv)/resourceGroups/assetbuilder-rg/providers/Microsoft.Web/sites/assetbuilder-frontend/config/web `
+  --set properties.acrUseManagedIdentityCreds=True
+```
+
+### Step 18: Restart App Services
+
+```bash
+az webapp restart --name assetbuilder-backend --resource-group assetbuilder-rg
+az webapp restart --name assetbuilder-frontend --resource-group assetbuilder-rg
+```
+
+### Step 19: Wait for Containers to Start
+
+```bash
+# Wait 3 minutes
+timeout /t 180
+```
+
+✅ **App Services configured**
+
+---
+
+## Part 6: Verify and Test
+
+### Step 20: Check Logs
+
+```bash
+# Check frontend logs
+az webapp log tail --name assetbuilder-frontend --resource-group assetbuilder-rg
+```
+
+**Look for:**
+- ✅ `Pulling image: assetbuilderacr.azurecr.io/asset-builder-frontend:latest`
+- ✅ `Container started successfully`
+
+Press `Ctrl+C` to exit.
+
+```bash
+# Check backend logs
+az webapp log tail --name assetbuilder-backend --resource-group assetbuilder-rg
+```
+
+### Step 21: Test Frontend
+
+```bash
+start https://assetbuilder-frontend.azurewebsites.net
+```
+
+### Step 22: Test Backend API Directly
+
+```bash
+start https://assetbuilder-backend.azurewebsites.net
+```
+
+Both should be accessible!
+
+✅ **Deployment complete!**
+
+---
+
+## What's Different in This Approach?
+
+| Feature | Complex (Private) | Simple (Public) |
+|---------|------------------|-----------------|
+| Frontend Access | ✅ Public | ✅ Public |
+| Backend Access | ❌ Private only | ✅ Public |
+| VNet | ✅ Required | ❌ Not needed |
+| Private Endpoint | ✅ Required | ❌ Not needed |
+| DNS Zone | ✅ Required | ❌ Not needed |
+| Subnets | ✅ 3 subnets | ❌ None |
+| Complexity | High | Low |
+| Security | Backend isolated | CORS protection only |
+| Cost | Higher | Lower |
+
+### Security Notes:
+- ✅ Backend still protected by CORS (only frontend can call it)
+- ✅ Both use HTTPS
+- ✅ Managed Identity for ACR (no passwords)
+- ⚠️ Backend API is technically accessible from internet (but CORS blocks browser requests)
+
+---
+
+## Summary of Resources Created
+
+```
+assetbuilder-rg (Resource Group)
+├── assetbuilderacr (Container Registry)
+├── assetbuilder-plan (App Service Plan)
+├── assetbuilder-backend (App Service - Public)
+└── assetbuilder-frontend (App Service - Public)
+```
+
+**Much simpler! No networking complexity!** 🎉
+
+Is this approach better for you?
